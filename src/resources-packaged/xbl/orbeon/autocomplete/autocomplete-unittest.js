@@ -64,6 +64,15 @@ ORBEON.xforms.Events.orbeonLoadedEvent.subscribe(function() {
         },
 
         /**
+         * Checks that the value in the search field is waht we expect it to be.
+         */
+        checkSearchValue: function(staticDynamic, expectedValue, message) {
+            var searchValue = ORBEON.xforms.Document.getValue(staticDynamic + "-autocomplete$search");
+            YAHOO.util.Assert.areEqual(expectedValue, searchValue, staticDynamic +
+                (YAHOO.lang.isUndefined(message) ? "" : " - " + message));
+        },
+
+        /**
          * Checks that the items we get in the suggestion list are the one we expect.
          */
         checkSuggestions: function(staticDynamic, expectedValues) {
@@ -177,6 +186,35 @@ ORBEON.xforms.Events.orbeonLoadedEvent.subscribe(function() {
                                 this.simulateClickItem(staticDynamic, 1);
                             }, function() {
                                 this.checkExternalValue(staticDynamic, "us2");
+                                continuation.call(this);
+                            });
+                        });
+                    });
+                });
+            });
+        },
+
+        testDoubleSpaceInLabel: function() {
+            this.runForStaticDynamic(function(staticDynamic, continuation) {
+                ORBEON.util.Test.executeCausingAjaxRequest(this, function() {
+                    // By typing the full country name, we already check that the suggestion comes and that it is
+                    // not one of the 2 possibilities that is automatically selected
+                    this.simulateTypeInField(staticDynamic, "Virgin");
+                }, function() {
+                    ORBEON.util.Test.executeCausingAjaxRequest(this, function() {
+                        // Click on the first Virgin Island
+                        this.simulateClickItem(staticDynamic, 0);
+                    }, function() {
+                        this.checkExternalValue(staticDynamic, "vq");
+                        ORBEON.util.Test.executeCausingAjaxRequest(this, function() {
+                            this.simulateTypeInField(staticDynamic, "Virgin");
+                        }, function() {
+                            ORBEON.util.Test.executeCausingAjaxRequest(this, function() {
+                                // Click on the second US
+                                this.simulateClickItem(staticDynamic, 1);
+                            }, function() {
+                                this.checkExternalValue(staticDynamic, "vq2");
+                                this.checkSearchValue(staticDynamic, "Virgin  Islands");
                                 continuation.call(this);
                             });
                         });
