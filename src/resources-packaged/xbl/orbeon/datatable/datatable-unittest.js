@@ -17,6 +17,68 @@ var testCase = {
 
     name: "datatable",
 
+    test314534: function() {
+        var thiss = this;
+        thiss.openAccordionCase(thiss, '_314534', function() {
+
+            var lastEvent = ORBEON.xforms.Document.getValue("lastEvent");
+            YAHOO.util.Assert.areEqual("fr-selection-changed", lastEvent, "After initialization, a fr-selection-changed event should have been received");
+            var currentIndex = ORBEON.xforms.Document.getValue("currentIndex");
+            YAHOO.util.Assert.areEqual(1, currentIndex, "After initialization, the current index should be one");
+            var currentValue = ORBEON.xforms.Document.getValue("currentValue");
+            YAHOO.util.Assert.areEqual("Lorem ipsum dolor sit amet, consectetuer adipiscing elit.", currentValue, "After initialization, the current value is wrong");
+            var value3 = YAHOO.util.Dom.get('my-accordion$_314534-table$_314534-value·3');
+            ORBEON.util.Test.executeCausingAjaxRequest(thiss, function() {
+                ORBEON.xforms.Document.setValue("lastEvent", 'none');
+                YAHOO.util.UserAction.click(value3, {clientX: 1});
+            }, function() {
+                lastEvent = ORBEON.xforms.Document.getValue("lastEvent");
+                YAHOO.util.Assert.areEqual("fr-selection-changed", lastEvent, "After a raw selection, a fr-selection-changed event should have been received");
+                currentIndex = ORBEON.xforms.Document.getValue("currentIndex");
+                YAHOO.util.Assert.areEqual(3, currentIndex, "After a raw selection, the index is wrong");
+                currentValue = ORBEON.xforms.Document.getValue("currentValue");
+                YAHOO.util.Assert.areEqual("Cras elementum ultrices diam. Maecenas ligula massa, varius a, semper congue, euismod non, mi.", currentValue, "After a raw selection, the current value is wrong");
+                var page5 = YAHOO.util.Dom.get('my-accordion$_314534-table$xf-34·5');
+
+                ORBEON.util.Test.executeCausingAjaxRequest(thiss, function() {
+                    ORBEON.xforms.Document.setValue("lastEvent", 'none');
+                    YAHOO.util.UserAction.click(page5, {clientX: 1});
+                }, function() {
+                    lastEvent = ORBEON.xforms.Document.getValue("lastEvent");
+                    YAHOO.util.Assert.areEqual("fr-selection-changed", lastEvent, "After a page selection, a fr-selection-changed event should have been received");
+                    currentIndex = ORBEON.xforms.Document.getValue("currentIndex");
+                    YAHOO.util.Assert.areEqual(3, currentIndex, "After a page selection, the index is wrong");
+                    currentValue = ORBEON.xforms.Document.getValue("currentValue");
+                    YAHOO.util.Assert.areEqual("Morbi vel erat non mauris convallis vehicula.", currentValue, "After a page selection, the current value is wrong");
+
+                    var sort = YAHOO.util.Dom.get('my-accordion$_314534-table$xf-59');
+
+                    ORBEON.util.Test.executeCausingAjaxRequest(thiss, function() {
+                        ORBEON.xforms.Document.setValue("lastEvent", 'none');
+                        YAHOO.util.UserAction.click(sort, {clientX: 1});
+                    }, function() {
+                        lastEvent = ORBEON.xforms.Document.getValue("lastEvent");
+                        YAHOO.util.Assert.areEqual("fr-selection-changed", lastEvent, "After a sort, a fr-selection-changed event should have been received");
+                        currentIndex = ORBEON.xforms.Document.getValue("currentIndex");
+                        YAHOO.util.Assert.areEqual(3, currentIndex, "After a sort, the index is wrong");
+                        currentValue = ORBEON.xforms.Document.getValue("currentValue");
+                        YAHOO.util.Assert.areEqual("Aliquam convallis sollicitudin purus.", currentValue, "After a sort, the current value is wrong");
+
+                        thiss.closeAccordionCase(thiss, '_314534');
+
+                    });
+
+
+                });
+
+
+            });
+
+
+        });
+    },
+
+
     // Simple hide/show cycle
     test314459: function() {
         var thiss = this;
