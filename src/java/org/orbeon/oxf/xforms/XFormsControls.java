@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009 Orbeon, Inc.
+ * Copyright (C) 2010 Orbeon, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it under the terms of the
  * GNU Lesser General Public License as published by the Free Software Foundation; either version
@@ -725,6 +725,7 @@ public class XFormsControls implements XFormsObjectResolver {
             if (isExistingIteration) {
                 // Mark the control as dirty so it gets reevaluated
                 repeatIterationControl.markDirty();
+                // NOTE: We don't need to call repeatIterationControl.setBindingContext() because XFormsRepeatControl/updateIterations() does it already
             }
 
             // Allow recursing into this iteration only if it is not a newly created iteration

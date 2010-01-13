@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009 Orbeon, Inc.
+ * Copyright (C) 2010 Orbeon, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it under the terms of the
  * GNU Lesser General Public License as published by the Free Software Foundation; either version
@@ -335,6 +335,7 @@ public class XFormsRepeatControl extends XFormsNoSingleNodeContainerControl {
 
                 final XFormsRepeatIterationControl newIteration;
                 final int currentOldIndex = oldIndexes[repeatIndex - 1];
+                final XFormsContextStack contextStack = getXBLContainer().getContextStack();
                 if (currentOldIndex == -1) {
                     // This new node was not in the old nodeset so create a new one
 
@@ -342,7 +343,7 @@ public class XFormsRepeatControl extends XFormsNoSingleNodeContainerControl {
                         indentedLogger.logDebug("xforms:repeat", "creating new iteration", "id", getEffectiveId(), "index", Integer.toString(repeatIndex));
                     }
 
-                    final XFormsContextStack contextStack = getXBLContainer().getContextStack();
+                    // Create repeat iteration with proper binding context
                     contextStack.pushIteration(repeatIndex);
                     newIteration = controls.createRepeatIterationTree(propertyContext, contextStack.getCurrentBindingContext(), this, repeatIndex);
                     contextStack.popBinding();
@@ -366,6 +367,12 @@ public class XFormsRepeatControl extends XFormsNoSingleNodeContainerControl {
 
                         // Set new index
                         newIteration.setIterationIndex(repeatIndex);
+
+                        // Update binding context on iteration for consistency (since binding context on xf:repeat control was updated by caller)
+                        // TODO: Then should the bindings for the whole subtree of control be updated at this time? Probably!
+                        contextStack.pushIteration(repeatIndex);
+                        newIteration.setBindingContext(propertyContext, contextStack.getCurrentBindingContext());
+                        contextStack.popBinding();
 
                         // Index new iteration but do not cause events to be sent
                         currentControlTree.indexSubtree(newIteration, true, false);
