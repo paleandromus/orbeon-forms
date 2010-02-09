@@ -246,8 +246,8 @@ public abstract class XFormsControl implements XFormsEventTarget, XFormsEventObs
         return isHTMLAlert ? getEscapedHTMLValue(pipelineContext, alert) : XMLUtils.escapeXMLMinimal(alert);
     }
 
-    public boolean isHTMLAlert(PipelineContext pipelineContext) {
-        getAlert(pipelineContext);
+    public boolean isHTMLAlert(PropertyContext propertyContext) {
+        getAlert(propertyContext);
         return isHTMLAlert;
     }
 
@@ -268,8 +268,8 @@ public abstract class XFormsControl implements XFormsEventTarget, XFormsEventObs
         return isHTMLHelp ? getEscapedHTMLValue(pipelineContext, help) : XMLUtils.escapeXMLMinimal(help);
     }
 
-    public boolean isHTMLHelp(PipelineContext pipelineContext) {
-        getHelp(pipelineContext);
+    public boolean isHTMLHelp(PropertyContext propertyContext) {
+        getHelp(propertyContext);
         return isHTMLHelp;
     }
 
@@ -291,8 +291,8 @@ public abstract class XFormsControl implements XFormsEventTarget, XFormsEventObs
         return isHTMLHint ? getEscapedHTMLValue(pipelineContext, hint) : XMLUtils.escapeXMLMinimal(hint);
     }
 
-    public boolean isHTMLHint(PipelineContext pipelineContext) {
-        getHint(pipelineContext);
+    public boolean isHTMLHint(PropertyContext propertyContext) {
+        getHint(propertyContext);
         return isHTMLHint;
     }
 
@@ -314,8 +314,8 @@ public abstract class XFormsControl implements XFormsEventTarget, XFormsEventObs
         return isHTMLLabel ? getEscapedHTMLValue(pipelineContext, label) : XMLUtils.escapeXMLMinimal(label);
     }
 
-    public boolean isHTMLLabel(PipelineContext pipelineContext) {
-        getLabel(pipelineContext);
+    public boolean isHTMLLabel(PropertyContext propertyContext) {
+        getLabel(propertyContext);
         return isHTMLLabel;
     }
 
@@ -507,11 +507,11 @@ public abstract class XFormsControl implements XFormsEventTarget, XFormsEventObs
     /**
      * Compare this control with another control, as far as the comparison is relevant for the external world.
      *
-     * @param pipelineContext   current PipelineContext
-     * @param other               other control
-     * @return                  true is the controls have identical external values, false otherwise
+     * @param propertyContext   current context
+     * @param other             other control
+     * @return                  true if the controls are identical for the purpose of an external diff, false otherwise
      */
-    public boolean equalsExternal(PipelineContext pipelineContext, XFormsControl other) {
+    public boolean equalsExternal(PropertyContext propertyContext, XFormsControl other) {
 
         if (other == null)
             return false;
@@ -524,13 +524,13 @@ public abstract class XFormsControl implements XFormsEventTarget, XFormsEventObs
         if (relevant != other.relevant)
             return false;
 
-        if (!XFormsUtils.compareStrings(getLabel(pipelineContext), other.getLabel(pipelineContext)))
+        if (!XFormsUtils.compareStrings(getLabel(propertyContext), other.getLabel(propertyContext)))
             return false;
-        if (!XFormsUtils.compareStrings(getHelp(pipelineContext), other.getHelp(pipelineContext)))
+        if (!XFormsUtils.compareStrings(getHelp(propertyContext), other.getHelp(propertyContext)))
             return false;
-        if (!XFormsUtils.compareStrings(getHint(pipelineContext), other.getHint(pipelineContext)))
+        if (!XFormsUtils.compareStrings(getHint(propertyContext), other.getHint(propertyContext)))
             return false;
-        if (!XFormsUtils.compareStrings(getAlert(pipelineContext), other.getAlert(pipelineContext)))
+        if (!XFormsUtils.compareStrings(getAlert(propertyContext), other.getAlert(propertyContext)))
             return false;
 
         // Compare values of extension attributes if any
@@ -1227,5 +1227,24 @@ public abstract class XFormsControl implements XFormsEventTarget, XFormsEventObs
 
     protected Set<String> getAllowedExternalEvents() {
         return Collections.emptySet();
+    }
+
+    public boolean equalsExternalRecurse(PropertyContext propertyContext, XFormsControl other) {
+        // By default there are no children controls
+        return equalsExternal(propertyContext, other);
+    }
+
+    /**
+     * Whether the control support Ajax updates.
+     *
+     * @return true iif it does
+     */
+    public boolean supportAjaxUpdates() {
+        return true;
+    }
+
+    public void outputAjaxDiff(PipelineContext pipelineContext, ContentHandlerHelper ch, XFormsControl other,
+                               AttributesImpl attributesImpl, boolean isNewlyVisibleSubtree) {
+        // NOP
     }
 }
