@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009 Orbeon, Inc.
+ * Copyright (C) 2010 Orbeon, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it under the terms of the
  * GNU Lesser General Public License as published by the Free Software Foundation; either version
@@ -17,7 +17,6 @@ import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 
 import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.Stack;
 
 /**
@@ -217,7 +216,7 @@ public class IndentedLogger {
     }
 
     private static String throwableToString(Throwable throwable) {
-        final PrintWriter writer = new PrintWriter(new StringWriter());
+        final PrintWriter writer = new PrintWriter(new StringBuilderWriter());
         throwable.printStackTrace(writer);
         return writer.toString();
     }
