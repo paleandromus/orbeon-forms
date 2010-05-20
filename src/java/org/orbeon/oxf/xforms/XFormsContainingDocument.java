@@ -14,10 +14,10 @@
 package org.orbeon.oxf.xforms;
 
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.pool.ObjectPool;
 import org.apache.log4j.Logger;
 import org.dom4j.Document;
 import org.dom4j.Element;
+import org.orbeon.oxf.cache.Cacheable;
 import org.orbeon.oxf.common.ValidationException;
 import org.orbeon.oxf.common.Version;
 import org.orbeon.oxf.pipeline.api.ExternalContext;
@@ -57,7 +57,7 @@ import java.util.*;
  * o Contains XForms controls
  * o Handles event handlers hierarchy
  */
-public class XFormsContainingDocument extends XBLContainer {
+public class XFormsContainingDocument extends XBLContainer implements Cacheable {
 
     // Special id name for the top-level containing document
     public static final String CONTAINING_DOCUMENT_PSEUDO_ID = "#document";
@@ -91,14 +91,14 @@ public class XFormsContainingDocument extends XBLContainer {
         }
     }
 
-    private String uuid;
+    private String uuid;                    // UUID of this document
+    private String dynamicStateInitialUUID; // UUID of the first dynamic state for this document
+    private String dynamicStateLatestUUID;  // UUID of the latest dynamic state for this document
+
     private final IndentedLogger indentedLogger = getIndentedLogger(LOGGING_CATEGORY);
 
     // Global XForms function library
     private static XFormsFunctionLibrary functionLibrary = new XFormsFunctionLibrary();
-
-    // Object pool this object must be returned to, if any
-    private ObjectPool sourceObjectPool;
 
     // Whether this document is currently being initialized
     private boolean isInitializing;
@@ -115,7 +115,7 @@ public class XFormsContainingDocument extends XBLContainer {
 
     // Client state
     private XFormsModelSubmission activeSubmission;
-    private boolean gotSubmission;
+//    private boolean gotSubmission;
     private boolean gotSubmissionSecondPass;
     private boolean gotSubmissionReplaceAll;
     private List<Message> messagesToRun;
@@ -125,7 +125,7 @@ public class XFormsContainingDocument extends XBLContainer {
     private String helpEffectiveControlId;
     private List<DelayedEvent> delayedEvents;
 
-    private boolean goingOffline;
+//    private boolean goingOffline;
 
     private final XPathDependencies xpathDependencies;
 
@@ -137,7 +137,7 @@ public class XFormsContainingDocument extends XBLContainer {
     }
 
     /**
-     * Create an XFormsContainingDocument from an XFormsEngineStaticState object.
+     * Create an XFormsContainingDocument from an XFormsStaticState object.
      *
      * @param pipelineContext           current context
      * @param xformsStaticState         static state object
@@ -172,6 +172,9 @@ public class XFormsContainingDocument extends XBLContainer {
 
             // Clear URI resolver, since it is of no use after initialization, and it may keep dangerous references (PipelineContext)
             this.uriResolver = null;
+
+            // Initialization is done, assign the dynamic state UUIDs
+            this.dynamicStateInitialUUID = this.dynamicStateLatestUUID = UUIDUtils.createPseudoUUID();
 
             // NOTE: we clear isInitializing when Ajax requests come in
         }
@@ -231,17 +234,13 @@ public class XFormsContainingDocument extends XBLContainer {
         indentedLogger.endHandleOperation();
     }
 
-    public XFormsState getXFormsState(PipelineContext pipelineContext) {
-        // Encode state
-        return new XFormsState(xformsStaticState.getEncodedStaticState(pipelineContext), createEncodedDynamicState(pipelineContext, false));
-    }
+//    public XFormsState getXFormsState(PipelineContext pipelineContext) {
+//        // Encode state
+//        return new XFormsState(xformsStaticState.getEncodedStaticState(pipelineContext), createEncodedDynamicState(pipelineContext, false));
+//    }
 
-    public void setSourceObjectPool(ObjectPool sourceObjectPool) {
-        this.sourceObjectPool = sourceObjectPool;
-    }
-
-    public ObjectPool getSourceObjectPool() {
-        return sourceObjectPool;
+    public XFormsState getXFormsState() {
+        return new XFormsState(xformsStaticState.getUUID(), getDynamicStateLatestUUID());
     }
 
     public XFormsURIResolver getURIResolver() {
@@ -250,6 +249,18 @@ public class XFormsContainingDocument extends XBLContainer {
 
     public String getUUID() {
         return uuid;
+    }
+
+    public String getDynamicStateInitialUUID() {
+        return dynamicStateInitialUUID;
+    }
+
+    public String getDynamicStateLatestUUID() {
+        return dynamicStateLatestUUID;
+    }
+
+    public void updateDynamicState() {
+        dynamicStateLatestUUID = UUIDUtils.createPseudoUUID();
     }
 
     public boolean isInitializing() {
@@ -290,7 +301,7 @@ public class XFormsContainingDocument extends XBLContainer {
     }
 
     /**
-     * Return the XFormsEngineStaticState.
+     * Return the static state of this document.
      */
     public XFormsStaticState getStaticState() {
         return xformsStaticState;
@@ -377,7 +388,7 @@ public class XFormsContainingDocument extends XBLContainer {
         this.isInitializing = false;
 
         this.activeSubmission = null;
-        this.gotSubmission = false;
+//        this.gotSubmission = false;
         this.gotSubmissionSecondPass = false;
         this.gotSubmissionReplaceAll = false;
 
@@ -388,7 +399,7 @@ public class XFormsContainingDocument extends XBLContainer {
         this.helpEffectiveControlId = null;
         this.delayedEvents = null;
 
-        this.goingOffline = false;
+//        this.goingOffline = false;
     }
 
     /**
@@ -417,12 +428,12 @@ public class XFormsContainingDocument extends XBLContainer {
         this.activeSubmission = activeSubmission;
     }
 
-    public boolean isGotSubmission() {
-        return gotSubmission;
-    }
+//    public boolean isGotSubmission() {
+//        return gotSubmission;
+//    }
 
     public void setGotSubmission() {
-        this.gotSubmission = true;
+//        this.gotSubmission = true;
     }
 
     public boolean isGotSubmissionSecondPass() {
@@ -1122,7 +1133,7 @@ public class XFormsContainingDocument extends XBLContainer {
             // TODO: Dispatch to children containers?
             dispatchEvent(propertyContext, new XXFormsOnlineEvent(this, currentModel));
         }
-        this.goingOffline = false;
+//        this.goingOffline = false;
     }
 
     public void goOffline(PropertyContext propertyContext) {
@@ -1155,12 +1166,12 @@ public class XFormsContainingDocument extends XBLContainer {
             // TODO: Dispatch to children containers
             dispatchEvent(propertyContext, new XXFormsOfflineEvent(this, currentModel));
         }
-        this.goingOffline = true;
+//        this.goingOffline = true;
     }
 
-    public boolean goingOffline() {
-        return goingOffline;
-    }
+//    public boolean goingOffline() {
+//        return goingOffline;
+//    }
 
     /**
      * Create an encoded dynamic state that represents the dynamic state of this XFormsContainingDocument.
@@ -1181,8 +1192,10 @@ public class XFormsContainingDocument extends XBLContainer {
         {
             dynamicStateDocument = Dom4jUtils.createDocument();
             final Element dynamicStateElement = dynamicStateDocument.addElement("dynamic-state");
-            // Add UUID
+            // Add UUIDs
             dynamicStateElement.addAttribute("uuid", uuid);
+            dynamicStateElement.addAttribute("initial-uuid", dynamicStateInitialUUID);
+            dynamicStateElement.addAttribute("latest-uuid", dynamicStateLatestUUID);
 
             // Serialize instances
             {
@@ -1210,9 +1223,14 @@ public class XFormsContainingDocument extends XBLContainer {
         // Get dynamic state document
         final Document dynamicStateDocument = XFormsUtils.decodeXML(pipelineContext, encodedDynamicState);
 
-        // Restore UUID
+        // Restore UUIDs
         this.uuid = dynamicStateDocument.getRootElement().attributeValue("uuid");
-        indentedLogger.logDebug("initialization", "restoring UUID", "uuid", this.uuid);
+        this.dynamicStateInitialUUID = dynamicStateDocument.getRootElement().attributeValue("initial-uuid");
+        this.dynamicStateLatestUUID = dynamicStateDocument.getRootElement().attributeValue("latest-uuid");
+
+        indentedLogger.logDebug("initialization", "restoring UUID", "UUID", this.uuid,
+                "initial dynamic state UUID", this.dynamicStateInitialUUID,
+                "latest dynamic state UUID", this.dynamicStateLatestUUID);
 
         // Restore models state
         {
@@ -1416,5 +1434,22 @@ public class XFormsContainingDocument extends XBLContainer {
 
     public boolean allowExternalEvent(IndentedLogger indentedLogger, String logType, String eventName) {
         return ALLOWED_EXTERNAL_EVENTS.contains(eventName);
+    }
+
+    /**
+     * Called when cache expires this document from the document cache.
+     */
+    public void evict(PropertyContext propertyContext) {
+        // TODO
+//        final ExternalContext externalContext = XFormsUtils.getExternalContext(propertyContext);
+//        final XFormsStateStore stateStore = XFormsPersistentApplicationStateStore.instance(externalContext);
+//
+//        final ExternalContext.Session session = externalContext.getSession(XFormsStateManager.FORCE_SESSION_CREATION);
+//        final String sessionId = (session != null) ? session.getId() : null;
+//
+//        final XFormsState encodedState = new XFormsState(getStaticState().getEncodedStaticState(propertyContext),
+//                createEncodedDynamicState(propertyContext, false));
+//
+//        stateStore.addEntry(getStaticState().getUUID(), xxx, getDynamicStateLatestUUID(), encodedState, sessionId, );
     }
 }

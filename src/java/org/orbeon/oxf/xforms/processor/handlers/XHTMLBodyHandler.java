@@ -19,6 +19,7 @@ import org.dom4j.QName;
 import org.orbeon.oxf.pipeline.api.ExternalContext;
 import org.orbeon.oxf.resources.ResourceManagerWrapper;
 import org.orbeon.oxf.xforms.*;
+import org.orbeon.oxf.xforms.state.XFormsStateManager;
 import org.orbeon.oxf.xml.ContentHandlerHelper;
 import org.orbeon.oxf.xml.ElementHandlerController;
 import org.orbeon.oxf.xml.XMLConstants;
@@ -102,10 +103,12 @@ public class XHTMLBodyHandler extends XFormsBaseHandler {
         {
             // Output encoded static and dynamic state
             helper.element(htmlPrefix, XMLConstants.XHTML_NAMESPACE_URI, "input", new String[] {
-                    "type", "hidden", "name", "$static-state", "value", handlerContext.getEncodedClientState().getStaticState()
+                    "type", "hidden", "name", "$static-state",
+                    "value", XFormsStateManager.instance().getClientEncodedStaticState(pipelineContext, containingDocument)
             });
-            helper.element(htmlPrefix, XMLConstants.XHTML_NAMESPACE_URI, "input", new String[]{
-                    "type", "hidden", "name", "$dynamic-state", "value", handlerContext.getEncodedClientState().getDynamicState()
+            helper.element(htmlPrefix, XMLConstants.XHTML_NAMESPACE_URI, "input", new String[] {
+                    "type", "hidden", "name", "$dynamic-state",
+                    "value", XFormsStateManager.instance().getClientEncodedDynamicState(pipelineContext, containingDocument)
             });
         }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009 Orbeon, Inc.
+ * Copyright (C) 2010 Orbeon, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it under the terms of the
  * GNU Lesser General Public License as published by the Free Software Foundation; either version
@@ -141,12 +141,10 @@ public class XFormsPersistentApplicationStateStore extends XFormsStateStore {
             final XFormsPersistentApplicationStateStore newStateStore = new XFormsPersistentApplicationStateStore();
 
             // Expire persistent entries
-            // NOTE: Not sure why we used to remove only those with session information. For now we remove everthing as
+            // NOTE: Not sure why we used to remove only those with session information. For now we remove everything as
             // a session is expected, but mainly this is because removing an entire collection is faster than removing
             // individual resources.
             newStateStore.expireAllPersistentUseCollection();
-//            newStateStore.expireAllPersistentWithSession();
-//            newStateStore.expireAllPersistent();
 
             // Keep new store in application scope
             externalContext.getAttributesMap().put(PERSISTENT_STATE_STORE_APPLICATION_KEY, newStateStore);
@@ -163,10 +161,10 @@ public class XFormsPersistentApplicationStateStore extends XFormsStateStore {
     }
 
     @Override
-    public synchronized void add(String pageGenerationId, String oldRequestId, String requestId, XFormsState xformsState, final String sessionId, boolean isInitialEntry) {
+    public synchronized void addEntry(String staticStateUUID, String oldDynamicStateUUID, String dynamicStateUUID, XFormsState xformsState, final String sessionId, boolean isInitialEntry) {
 
         // Do the operation
-        super.add(pageGenerationId, oldRequestId, requestId, xformsState, sessionId, isInitialEntry);
+        super.addEntry(staticStateUUID, oldDynamicStateUUID, dynamicStateUUID, xformsState, sessionId, isInitialEntry);
 
         // Add session listener if needed
         if (sessionId != null) {

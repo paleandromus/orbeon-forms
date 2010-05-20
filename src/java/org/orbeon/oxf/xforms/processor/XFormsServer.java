@@ -13,7 +13,6 @@
  */
 package org.orbeon.oxf.xforms.processor;
 
-import org.apache.commons.pool.ObjectPool;
 import org.apache.log4j.Logger;
 import org.dom4j.Document;
 import org.dom4j.Element;
@@ -35,21 +34,18 @@ import org.orbeon.oxf.xforms.event.XFormsEvent;
 import org.orbeon.oxf.xforms.event.XFormsEventFactory;
 import org.orbeon.oxf.xforms.event.XFormsEventTarget;
 import org.orbeon.oxf.xforms.event.XFormsEvents;
-import org.orbeon.oxf.xforms.state.XFormsDocumentCache;
-import org.orbeon.oxf.xforms.state.XFormsState;
 import org.orbeon.oxf.xforms.state.XFormsStateManager;
 import org.orbeon.oxf.xforms.submission.AsynchronousSubmissionManager;
 import org.orbeon.oxf.xforms.submission.XFormsModelSubmission;
-import org.orbeon.oxf.xml.*;
+import org.orbeon.oxf.xml.ContentHandlerHelper;
+import org.orbeon.oxf.xml.SAXStore;
+import org.orbeon.oxf.xml.TeeContentHandler;
 import org.orbeon.oxf.xml.XMLUtils;
 import org.orbeon.oxf.xml.dom4j.Dom4jUtils;
 import org.orbeon.oxf.xml.dom4j.LocationSAXContentHandler;
 import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 
-import javax.xml.transform.OutputKeys;
-import javax.xml.transform.sax.TransformerHandler;
-import javax.xml.transform.stream.StreamResult;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -183,51 +179,8 @@ public class XFormsServer extends ProcessorImpl {
             }
         }
 
-        // Get static state
-        final String encodedClientStaticStateString;
-        {
-            final Element staticStateElement = requestDocument.getRootElement().element(XFormsConstants.XXFORMS_STATIC_STATE_QNAME);
-            encodedClientStaticStateString = staticStateElement.getTextTrim();
-        }
-
-        // Get dynamic state
-        final String encodedClientDynamicStateString;
-        {
-            final Element dynamicStateElement = requestDocument.getRootElement().element(XFormsConstants.XXFORMS_DYNAMIC_STATE_QNAME);
-            encodedClientDynamicStateString = dynamicStateElement.getTextTrim();
-        }
-
-        if (session == null && XFormsStateManager.isSessionDependentState(encodedClientStaticStateString, encodedClientDynamicStateString)) {
-            throw new OXFException("Session has expired. Unable to process incoming request.");
-        }
-
-        // Decode state
-        final XFormsStateManager.XFormsDecodedClientState xformsDecodedClientState
-                = XFormsStateManager.decodeClientState(pipelineContext, encodedClientStaticStateString, encodedClientDynamicStateString);
-
-        // Get initial dynamic state for "all events" event if needed
-        final XFormsStateManager.XFormsDecodedClientState xformsDecodedInitialClientState;
-        {
-            final Element initialDynamicStateElement = requestDocument.getRootElement().element(XFormsConstants.XXFORMS_INITIAL_DYNAMIC_STATE_QNAME);
-            if (initialDynamicStateElement != null) {
-                final String encodedClientInitialDynamicStateString = initialDynamicStateElement.getTextTrim();
-
-                xformsDecodedInitialClientState
-                    = XFormsStateManager.decodeClientState(pipelineContext, encodedClientStaticStateString, encodedClientInitialDynamicStateString);
-            } else {
-                xformsDecodedInitialClientState = null;
-            }
-        }
-
-        // Get or create containing document
-        final XFormsContainingDocument containingDocument;
-        if (XFormsProperties.isCacheDocument()) {
-            // Obtain containing document through cache
-            containingDocument = XFormsDocumentCache.instance().find(pipelineContext, xformsDecodedClientState.getXFormsState());
-        } else {
-            // Otherwise we recreate the containing document from scratch
-            containingDocument = new XFormsContainingDocument(pipelineContext, xformsDecodedClientState.getXFormsState());
-        }
+        // Find or restore containing document from the incoming request
+        final XFormsContainingDocument containingDocument = XFormsStateManager.instance().findOrRestoreDocument(pipelineContext, requestDocument, session);
 
         // The synchronization is tricky: certainly, once we get a document, we don't want to allow multiple threads to
         // it at the same time as a document is clearly not thread-safe. What could happen though in theory is two Ajax
@@ -325,7 +278,7 @@ public class XFormsServer extends ProcessorImpl {
                         containingDocument.processCompletedAsynchronousSubmissions(pipelineContext, handleGoingOnline, false);
 
                         // Dispatch everything
-                        allEvents = createAndDispatchEvents(pipelineContext, containingDocument, xformsDecodedInitialClientState,
+                        allEvents = createAndDispatchEvents(pipelineContext, containingDocument,
                                 filesElement, eventElements, serverEventsCount, valueChangeControlIds, handleGoingOnline);
 
                         // Process completed asynchronous submissions if any
@@ -341,6 +294,9 @@ public class XFormsServer extends ProcessorImpl {
 
                 // TODO: UI-DEPENDENCIES TEMP
 //                containingDocument.getStaticState().dumpAnalysis();
+
+                // Notify the state manager that we will send the response
+                XFormsStateManager.instance().beforeUpdateResponse(pipelineContext, containingDocument);
 
                 if (contentHandler != null) {
                     // Create resulting document if there is a ContentHandler
@@ -363,14 +319,14 @@ public class XFormsServer extends ProcessorImpl {
                             responseContentHandler = contentHandler;
                         }
 
-                        outputAjaxResponse(containingDocument, indentedLogger, valueChangeControlIds, pipelineContext, responseContentHandler,
-                                xformsDecodedClientState, xformsDecodedInitialClientState, allEvents, false, false, false);
+                        outputAjaxResponse(containingDocument, indentedLogger, valueChangeControlIds, pipelineContext,
+                                responseContentHandler, allEvents, false, false, false);
 
                         indentedLogger.endHandleOperation("ajax response", (debugContentHandler != null) ? Dom4jUtils.domToPrettyString(debugContentHandler.getDocument()) : null);
                     } else {
                         // Noscript mode
                         indentedLogger.startHandleOperation("response", "handling noscript response");
-                        outputNoscriptResponse(containingDocument, indentedLogger, pipelineContext, contentHandler, xformsDecodedClientState, allEvents, externalContext);
+                        outputNoscriptResponse(containingDocument, indentedLogger, pipelineContext, contentHandler, externalContext);
                         indentedLogger.endHandleOperation();
                     }
 
@@ -383,23 +339,12 @@ public class XFormsServer extends ProcessorImpl {
                     // not modified. However, we must then return it to its pool.
 
                     indentedLogger.logDebug("response", "handling NOP response for submission with replace=\"all\"");
+                }
 
-                    if (XFormsProperties.isCacheDocument()) {
-                        XFormsDocumentCache.instance().add(pipelineContext, xformsDecodedClientState.getXFormsState(), containingDocument);
-                    }
-                }
+                // Notify state manager that we are done sending the response
+                XFormsStateManager.instance().afterUpdateResponse(pipelineContext, containingDocument);
+
             } catch (Throwable e) {
-                // If an exception is caught, we need to discard the object as its state may be inconsistent
-                final ObjectPool sourceObjectPool = containingDocument.getSourceObjectPool();
-                if (sourceObjectPool != null) {
-                    indentedLogger.logDebug("", "containing document cache: throwable caught, discarding document from pool.");
-                    try {
-                        sourceObjectPool.invalidateObject(containingDocument);
-                        containingDocument.setSourceObjectPool(null);
-                    } catch (Exception e1) {
-                        throw new OXFException(e1);
-                    }
-                }
                 throw new OXFException(e);
             }
         }
@@ -408,8 +353,8 @@ public class XFormsServer extends ProcessorImpl {
     private static String[] EVENT_PARAMETERS = new String[] { "dnd-start", "dnd-end", "modifiers", "text" };
 
     private boolean createAndDispatchEvents(PipelineContext pipelineContext, XFormsContainingDocument containingDocument,
-                           XFormsStateManager.XFormsDecodedClientState xformsDecodedInitialClientState, Element filesElement,
-                           List<Element> eventElements, int serverEventsCount, Set<String> valueChangeControlIds, boolean handleGoingOnline) {
+                           Element filesElement, List<Element> eventElements, int serverEventsCount, Set<String> valueChangeControlIds,
+                           boolean handleGoingOnline) {
 
         // NOTE: We store here the last xxforms-value-change-with-focus-change event so
         // we can coalesce values in case several such events are sent for the same
@@ -451,8 +396,6 @@ public class XFormsServer extends ProcessorImpl {
 
             if (XFormsEvents.XXFORMS_ALL_EVENTS_REQUIRED.equals(eventName)) {
                 // Special event telling us to resend the client all the events since initialization
-                if (xformsDecodedInitialClientState == null)
-                    throw new OXFException("Got xxforms-all-events-required event without initial dynamic state.");
 
                 // Remember that we got this event
                 hasAllEvents = true;
@@ -483,7 +426,7 @@ public class XFormsServer extends ProcessorImpl {
                     // Other normal events
 
                     // xxforms-offline requires initial dynamic state
-                    if (eventName.equals(XFormsEvents.XXFORMS_OFFLINE) && xformsDecodedInitialClientState == null)
+                    if (eventName.equals(XFormsEvents.XXFORMS_OFFLINE))
                         throw new OXFException("Got xxforms-offline event without initial dynamic state.");
 
                     if (lastSourceControlId != null) {
@@ -688,18 +631,14 @@ public class XFormsServer extends ProcessorImpl {
      * @param containingDocument            containing document
      * @param pipelineContext               pipeline context
      * @param contentHandler                content handler for the XHTML result
-     * @param xformsDecodedClientState      incoming client state
-     * @param allEvents                     whether to handle all events [TODO: is this needed in this mode?]
      * @param externalContext               external context
      * @throws IOException
      * @throws SAXException
      */
     private void outputNoscriptResponse(XFormsContainingDocument containingDocument, IndentedLogger indentedLogger, PipelineContext pipelineContext,
-                                               ContentHandler contentHandler, XFormsStateManager.XFormsDecodedClientState xformsDecodedClientState,
-                                               boolean allEvents, ExternalContext externalContext) throws IOException, SAXException {
+                                               ContentHandler contentHandler, ExternalContext externalContext) throws IOException, SAXException {
         // This will also cache the containing document if needed
         // QUESTION: Do we actually need to cache if a xforms:submission[@replace = 'all'] happened?
-        final XFormsState encodedClientState = XFormsStateManager.getEncodedClientStateDoCache(containingDocument, pipelineContext, xformsDecodedClientState, allEvents);
 
         final List loads = containingDocument.getLoadsToRun();
         if (loads != null && loads.size() > 0) {
@@ -724,7 +663,7 @@ public class XFormsServer extends ProcessorImpl {
 
             indentedLogger.logDebug("response", "handling noscript response for XHTML output");
             XFormsToXHTML.outputResponseDocument(pipelineContext, externalContext, indentedLogger, xhtmlDocument,
-                    containingDocument, contentHandler, encodedClientState);
+                    containingDocument, contentHandler);
         }
     }
 
@@ -736,17 +675,14 @@ public class XFormsServer extends ProcessorImpl {
      * @param valueChangeControlIds             control ids for which the client sent a value change
      * @param pipelineContext                   pipeline context
      * @param contentHandler                    content handler for the Ajax result
-     * @param xformsDecodedClientState          incoming client state
-     * @param xformsDecodedInitialClientState   initial client state for all events mode
      * @param allEvents                         whether to handle all events
      * @param isOfflineEvents                   whether to output going offline information
      * @param testOutputStaticState             for testing purposes
      * @param testOutputAllActions              for testing purposes
      */
     public static void outputAjaxResponse(XFormsContainingDocument containingDocument, IndentedLogger indentedLogger, Set<String> valueChangeControlIds,
-                                PipelineContext pipelineContext, ContentHandler contentHandler, XFormsStateManager.XFormsDecodedClientState xformsDecodedClientState,
-                                XFormsStateManager.XFormsDecodedClientState xformsDecodedInitialClientState,
-                                boolean allEvents, boolean isOfflineEvents, boolean testOutputStaticState, boolean testOutputAllActions) {
+                                PipelineContext pipelineContext, ContentHandler contentHandler, boolean allEvents,
+                                boolean isOfflineEvents, boolean testOutputStaticState, boolean testOutputAllActions) {
 
         final ExternalContext externalContext = (ExternalContext) pipelineContext.getAttribute(PipelineContext.EXTERNAL_CONTEXT);
         final XFormsControls xformsControls = containingDocument.getControls();
@@ -803,32 +739,32 @@ public class XFormsServer extends ProcessorImpl {
             // Get encoded state to send to the client (unless computing the list of offline events)
             if (!isOfflineEvents) {
                 // State ready to send to the client
-                final XFormsState encodedClientState;
                 // Whether the incoming state handling mode is different from the outgoing state handling mode
-                final boolean isMustChangeStateHandling;
-                if (containingDocument.goingOffline()) {
-                    // We force client state if we are going offline, and do not cache as it is likely that the result won't be used soon
-                    encodedClientState = XFormsStateManager.getEncryptedSerializedClientState(containingDocument, pipelineContext, xformsDecodedClientState);
-                    // Outgoing mode is always "client", so in effect we are changing when the regular mode is not client
-                    isMustChangeStateHandling = !xformsDecodedClientState.isClientStateHandling();
-                } else {
+//                final boolean isMustChangeStateHandling;
+//                if (containingDocument.goingOffline()) {
+//                    // We force client state if we are going offline, and do not cache as it is likely that the result won't be used soon
+//                    encodedClientState = XFormsStateManager.getEncryptedSerializedClientState(containingDocument, pipelineContext, xformsDecodedClientState);
+//                    // Outgoing mode is always "client", so in effect we are changing when the regular mode is not client
+//                    isMustChangeStateHandling = !xformsDecodedClientState.isClientStateHandling();
+//                } else {
                     // This will also cache the containing document if needed
-                    encodedClientState = XFormsStateManager.getEncodedClientStateDoCache(containingDocument, pipelineContext, xformsDecodedClientState, allEvents);
-                    isMustChangeStateHandling = xformsDecodedClientState.isClientStateHandling() != XFormsProperties.isClientStateHandling(containingDocument);
-                }
+//                    encodedClientState = XFormsStateManager.getEncodedClientStateDoCache(containingDocument, pipelineContext, xformsDecodedClientState, allEvents);
+//                    isMustChangeStateHandling = xformsDecodedClientState.isClientStateHandling() != XFormsProperties.isClientStateHandling(containingDocument);
+//                }
 
                 // Output static state when changing state handling mode, or when testing
-                if (isMustChangeStateHandling || testOutputStaticState) {
-                    ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "static-state", new String[] { "container-type", externalContext.getRequest().getContainerType() });
-                    // NOTE: Should output static state the same way as XFormsToXHTML does, but it's just for tests for for now it's ok
-                    ch.text(encodedClientState.getStaticState());
+                if (testOutputStaticState) {
+                    ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "static-state", new String[] {
+                            "container-type", externalContext.getRequest().getContainerType()
+                    });
+                    ch.text(XFormsStateManager.instance().getClientEncodedStaticState(pipelineContext, containingDocument));
                     ch.endElement();
                 }
 
                 // Output dynamic state
                 {
                     ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "dynamic-state");
-                    ch.text(encodedClientState.getDynamicState());
+                    ch.text(XFormsStateManager.instance().getClientEncodedDynamicState(pipelineContext, containingDocument));
                     ch.endElement();
                 }
             }
@@ -839,7 +775,9 @@ public class XFormsServer extends ProcessorImpl {
                 if (!allEvents) {
                     initialContainingDocument = null;
                 } else {
-                    initialContainingDocument = new XFormsContainingDocument(pipelineContext, xformsDecodedInitialClientState.getXFormsState(), containingDocument.getStaticState());
+                    // TODO: ALL_EVENTS
+                    initialContainingDocument = null;
+//                    initialContainingDocument = new XFormsContainingDocument(pipelineContext, xformsDecodedInitialClientState.getXFormsState(), containingDocument.getStaticState());
                 }
 
                 ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "action");
@@ -947,50 +885,50 @@ public class XFormsServer extends ProcessorImpl {
                 }
 
                 // Output go offline instruction (unless computing the list of offline events)
-                {
-                    if (containingDocument.goingOffline() && !isOfflineEvents) {
-                        ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "offline");
-
-                        if (xformsDecodedInitialClientState != null) {
-                            // Do not run this if xformsDecodedInitialClientState is null. The general rule is that
-                            // when going offline, xformsDecodedInitialClientState must not be null so we can compute
-                            // the list of diffs to send to the client. However, there is one exception: going back
-                            // offline in response to an Ajax request asking to go online: currently, the client is
-                            // unable to pass back the initial dynamic state, so we are unable to produce the list of
-                            // changes. So we just response xxforms:offline and that's it. The client must then not go
-                            // back online.
-
-
-                            // Send all the changes between the initial state and the time the form go offline, so when
-                            // reloading the page the client can apply those changes when the page is reloaded from the
-                            // client-side database.
-                            final StringBuilderWriter writer = new StringBuilderWriter();
-                            final TransformerHandler identity = TransformerUtils.getIdentityTransformerHandler();
-                            identity.getTransformer().setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");// no XML decl.
-                            identity.setResult(new StreamResult(writer));
-
-                            // Output response into writer. We ask for all events, and passing a flag telling that we are
-                            // processing offline events so as to avoid recursion
-
-                            outputAjaxResponse(containingDocument, indentedLogger, valueChangeControlIds, pipelineContext, identity, xformsDecodedClientState, xformsDecodedInitialClientState, true, true, false, false);
-
-                            // List of events needed to update the page from the time the page was initially sent to the
-                            // client until right before sending the xxforms:offline event.
-                            ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "events");
-                            ch.text(writer.toString());
-                            ch.endElement();
-
-                            // List of offline bind mappings. This allows the client to perform simple handling of
-                            // validation, relevance, readonly, and required for xforms:bind[@xxforms:offline = 'true'].
-                            ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "mappings");
-                            final String offlineBindMappings = XFormsModelBinds.getOfflineBindMappings(containingDocument);
-                            ch.text(offlineBindMappings);
-                            ch.endElement();
-                        }
-
-                        ch.endElement();
-                    }
-                }
+//                {
+//                    if (containingDocument.goingOffline() && !isOfflineEvents) {
+//                        ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "offline");
+//
+//                        if (xformsDecodedInitialClientState != null) {
+//                            // Do not run this if xformsDecodedInitialClientState is null. The general rule is that
+//                            // when going offline, xformsDecodedInitialClientState must not be null so we can compute
+//                            // the list of diffs to send to the client. However, there is one exception: going back
+//                            // offline in response to an Ajax request asking to go online: currently, the client is
+//                            // unable to pass back the initial dynamic state, so we are unable to produce the list of
+//                            // changes. So we just response xxforms:offline and that's it. The client must then not go
+//                            // back online.
+//
+//
+//                            // Send all the changes between the initial state and the time the form go offline, so when
+//                            // reloading the page the client can apply those changes when the page is reloaded from the
+//                            // client-side database.
+//                            final StringBuilderWriter writer = new StringBuilderWriter();
+//                            final TransformerHandler identity = TransformerUtils.getIdentityTransformerHandler();
+//                            identity.getTransformer().setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");// no XML decl.
+//                            identity.setResult(new StreamResult(writer));
+//
+//                            // Output response into writer. We ask for all events, and passing a flag telling that we are
+//                            // processing offline events so as to avoid recursion
+//
+//                            outputAjaxResponse(containingDocument, indentedLogger, valueChangeControlIds, pipelineContext, identity, true, true, false, false);
+//
+//                            // List of events needed to update the page from the time the page was initially sent to the
+//                            // client until right before sending the xxforms:offline event.
+//                            ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "events");
+//                            ch.text(writer.toString());
+//                            ch.endElement();
+//
+//                            // List of offline bind mappings. This allows the client to perform simple handling of
+//                            // validation, relevance, readonly, and required for xforms:bind[@xxforms:offline = 'true'].
+//                            ch.startElement("xxf", XFormsConstants.XXFORMS_NAMESPACE_URI, "mappings");
+//                            final String offlineBindMappings = XFormsModelBinds.getOfflineBindMappings(containingDocument);
+//                            ch.text(offlineBindMappings);
+//                            ch.endElement();
+//                        }
+//
+//                        ch.endElement();
+//                    }
+//                }
 
                 ch.endElement();
             }

@@ -14,12 +14,15 @@
 package org.orbeon.oxf.xforms.state;
 
 import org.apache.log4j.Logger;
+import org.dom4j.Document;
+import org.dom4j.Element;
 import org.orbeon.oxf.common.OXFException;
 import org.orbeon.oxf.pipeline.api.ExternalContext;
+import org.orbeon.oxf.pipeline.api.PipelineContext;
 import org.orbeon.oxf.util.IndentedLogger;
 import org.orbeon.oxf.util.LoggerFactory;
 import org.orbeon.oxf.util.PropertyContext;
-import org.orbeon.oxf.util.UUIDUtils;
+import org.orbeon.oxf.xforms.XFormsConstants;
 import org.orbeon.oxf.xforms.XFormsContainingDocument;
 import org.orbeon.oxf.xforms.XFormsProperties;
 import org.orbeon.oxf.xforms.XFormsUtils;
@@ -36,109 +39,112 @@ public class XFormsStateManager {
     private static final Logger logger = LoggerFactory.createLogger(XFormsStateManager.class);
     private static final IndentedLogger indentedLogger = XFormsContainingDocument.getIndentedLogger(logger, XFormsServer.getLogger(), LOGGING_CATEGORY);
 
-    // All these must have the same length
-    public static final String APPLICATION_STATE_PREFIX = "appl:";
+    // All prefixes must have the same length
     public static final String PERSISTENT_STATE_PREFIX = "pers:";
-
-    private static final int PREFIX_COLON_POSITION = APPLICATION_STATE_PREFIX.length() - 1;
+    private static final int PREFIX_COLON_POSITION = PERSISTENT_STATE_PREFIX.length() - 1;
 
     // Ideally we wouldn't want to force session creation, but it's hard to implement the more elaborate expiration
-    // strategy without session. See https://wiki.objectweb.org/ops/Wiki.jsp?page=XFormsStateStoreImprovements
+    // strategy without session.
     public static final boolean FORCE_SESSION_CREATION = true;
 
     public static IndentedLogger getIndentedLogger() {
         return indentedLogger;
     }
 
-    /**
-     * Get the initial encoded XForms state as it must be sent to the client within the (X)HTML, and if needed (server
-     * state handling) add the state to the state store.
-     *
-     * @param containingDocument    containing document
-     * @param externalContext       external context (for access to session and application scopes)
-     * @param xformsState           post-initialization XFormsState
-     * @param staticStateUUID       static state UUID (if static state was cached against input document)
-     * @param dynamicStateUUID      dynamic state UUID (if dynamic state was cached against output document)
-     * @return                      XFormsState containing the encoded static and dynamic states
-     */
-    public static XFormsState getInitialEncodedClientState(XFormsContainingDocument containingDocument, ExternalContext externalContext,
-                                                           XFormsState xformsState, String staticStateUUID, String dynamicStateUUID) {
+    private static XFormsStateManager instance = null;
 
-        final String currentPageGenerationId;
-        final String staticStateString;
-        {
-            if (!XFormsProperties.isClientStateHandling(containingDocument)) {
-                // Server state handling with persistent store
-                if (staticStateUUID == null) {
-                    currentPageGenerationId = UUIDUtils.createPseudoUUID();
-                } else {
-                    currentPageGenerationId = staticStateUUID;
-                }
-                staticStateString = PERSISTENT_STATE_PREFIX + currentPageGenerationId;
-            } else {
-                // Encoded static state is just serialized form
-                staticStateString = xformsState.getStaticState();
-                currentPageGenerationId = null;
-            }
+    public synchronized static XFormsStateManager instance() {
+        if (instance == null) {
+            instance = new XFormsStateManager();
         }
+        return instance;
+    }
 
-        final String dynamicStateString;
-        {
-            if (!XFormsProperties.isClientStateHandling(containingDocument)) {
-                // Server state handling with persistent store
+    private XFormsStateManager() {}
 
-                // Get session id if needed
-                final ExternalContext.Session session = externalContext.getSession(FORCE_SESSION_CREATION);
-                final String sessionId = (session != null) ? session.getId() : null;
-
-                final XFormsStateStore stateStore = XFormsPersistentApplicationStateStore.instance(externalContext);
-                if (dynamicStateUUID == null) {
-                    // Produce dynamic state key
-                    final String newRequestId = UUIDUtils.createPseudoUUID();
-                    stateStore.add(currentPageGenerationId, null, newRequestId, xformsState, sessionId, true);
-                    dynamicStateString = PERSISTENT_STATE_PREFIX + newRequestId;
-                } else {
-                    dynamicStateString = PERSISTENT_STATE_PREFIX + dynamicStateUUID;
-                    stateStore.add(currentPageGenerationId, null, dynamicStateUUID, xformsState, sessionId, true);
-                }
-            } else {
-                // Encoded dynamic state is just serialized form
-                dynamicStateString = xformsState.getDynamicState();
-            }
+    public void afterInitialResponse(PropertyContext propertyContext, XFormsContainingDocument containingDocument) {
+        if (XFormsProperties.isCacheDocument()) {
+            // Cache the document
+            XFormsDocumentCache.instance().storeDocument(propertyContext, containingDocument);
         }
-
-        return new XFormsState(staticStateString, dynamicStateString);
     }
 
     /**
-     * Return the delay for the session heartbeat event.
+     * Find or restore a document based on an incoming request.
      *
-     * @param containingDocument    containing document
-     * @param externalContext       external context (for access to session and application scopes)
-     * @return                      delay in ms, or -1 is not applicable
+     * @param pipelineContext   current context
+     * @param request           incoming Ajax request document
+     * @param session           session
+     * @return                  document, either from cache or from state information
      */
-    public static long getHeartbeatDelay(XFormsContainingDocument containingDocument, ExternalContext externalContext) {
-        if (XFormsProperties.isClientStateHandling(containingDocument)) {
-            return -1;
-        } else {
-            final long heartbeatDelay;
-            final boolean isSessionHeartbeat = XFormsProperties.isSessionHeartbeat(containingDocument);
-            final ExternalContext.Session session = externalContext.getSession(FORCE_SESSION_CREATION);
-            if (isSessionHeartbeat && session != null)
-                heartbeatDelay = session.getMaxInactiveInterval() * 800; // 80% of session expiration time, in ms
-            else
-                heartbeatDelay = -1;
-            return heartbeatDelay;
+    public XFormsContainingDocument findOrRestoreDocument(PipelineContext pipelineContext, Document request, ExternalContext.Session session) {
+
+        // Get static state
+        final String encodedStaticState;
+        {
+            final Element staticStateElement = request.getRootElement().element(XFormsConstants.XXFORMS_STATIC_STATE_QNAME);
+            encodedStaticState = staticStateElement.getTextTrim();
         }
+
+        // Get dynamic state
+        final String encodedDynamicState;
+        {
+            final Element dynamicStateElement = request.getRootElement().element(XFormsConstants.XXFORMS_DYNAMIC_STATE_QNAME);
+            encodedDynamicState = dynamicStateElement.getTextTrim();
+        }
+
+        // Check session if needed
+        if (session == null && isSessionDependentState(encodedStaticState)) {
+            throw new OXFException("Session has expired. Unable to process incoming request.");
+        }
+
+        return findOrRestoreDocument(pipelineContext, encodedStaticState, encodedDynamicState);
     }
 
-    public static boolean isSessionDependentState(String staticStateString, String dynamicStateString) {
-        if (staticStateString.length() > PREFIX_COLON_POSITION && staticStateString.charAt(PREFIX_COLON_POSITION) == ':') {
-            final String staticStatePrefix = staticStateString.substring(0, PREFIX_COLON_POSITION + 1);
-            return staticStatePrefix.equals(PERSISTENT_STATE_PREFIX) || staticStatePrefix.equals(APPLICATION_STATE_PREFIX);
+    private XFormsContainingDocument findOrRestoreDocument(PipelineContext pipelineContext, String encodedClientStaticState, String encodedClientDynamicState) {
+
+        // Get or create document
+        final XFormsContainingDocument containingDocument;
+        if (XFormsProperties.isCacheDocument()) {
+            // Try to find the document in cache
+            final XFormsContainingDocument cachedDocument
+                    = XFormsDocumentCache.instance().getDocument(pipelineContext,
+                        new XFormsState(removePrefix(encodedClientStaticState), removePrefix(encodedClientDynamicState)));
+
+            if (cachedDocument != null) {
+                // Found in cache
+                containingDocument = cachedDocument;
+            } else {
+                // Not found in cache, must recreate from store
+                containingDocument = createDocumentFromStore(pipelineContext, encodedClientStaticState, encodedClientDynamicState);
+            }
         } else {
-            return false;
+            // Must recreate from store
+            containingDocument = createDocumentFromStore(pipelineContext, encodedClientStaticState, encodedClientDynamicState);
         }
+        return containingDocument;
+    }
+
+    private XFormsContainingDocument createDocumentFromStore(PipelineContext pipelineContext, String encodedClientStaticState, String encodedClientDynamicState) {
+        final XFormsState decodedState
+                = decodeClientState(pipelineContext, encodedClientStaticState, encodedClientDynamicState);
+        return new XFormsContainingDocument(pipelineContext, decodedState);
+    }
+
+    private boolean isSessionDependentState(String staticStateString) {
+        return isIndirectState(staticStateString) && getPrefix(staticStateString).equals(PERSISTENT_STATE_PREFIX);
+    }
+
+    private boolean isIndirectState(String stateString) {
+        return stateString.length() > PREFIX_COLON_POSITION && stateString.charAt(PREFIX_COLON_POSITION) == ':';
+    }
+
+    private String getPrefix(String stateString) {
+        return stateString.substring(0, PREFIX_COLON_POSITION + 1);
+    }
+
+    private String removePrefix(String stateString) {
+        return stateString.substring(PREFIX_COLON_POSITION + 1);
     }
 
     /**
@@ -149,20 +155,20 @@ public class XFormsStateManager {
      * @param dynamicStateString    dynamic state string as sent by client
      * @return                      decoded state
      */
-    public static XFormsDecodedClientState decodeClientState(PropertyContext propertyContext, String staticStateString, String dynamicStateString) {
+    private XFormsState decodeClientState(PropertyContext propertyContext, String staticStateString, String dynamicStateString) {
 
         final ExternalContext externalContext = XFormsUtils.getExternalContext(propertyContext);
 
-        final XFormsDecodedClientState xformsDecodedClientState;
-        if (staticStateString.length() > PREFIX_COLON_POSITION && staticStateString.charAt(PREFIX_COLON_POSITION) == ':') {
+        final XFormsState xformsDecodedClientState;
+        if (isIndirectState(staticStateString)) {
             // State doesn't come directly with request
 
             // Separate prefixes from UUIDs
-            final String staticStatePrefix = staticStateString.substring(0, PREFIX_COLON_POSITION + 1);
-            final String staticStateUUID = staticStateString.substring(PREFIX_COLON_POSITION + 1);
+            final String staticStatePrefix = getPrefix(staticStateString);
+            final String staticStateUUID = removePrefix(staticStateString);
 
-            final String dynamicStatePrefix = dynamicStateString.substring(0, PREFIX_COLON_POSITION + 1);
-            final String dynamicStateUUID = dynamicStateString.substring(PREFIX_COLON_POSITION + 1);
+            final String dynamicStatePrefix = getPrefix(dynamicStateString);
+            final String dynamicStateUUID = removePrefix(dynamicStateString);
 
             // Both prefixes must be the same
             if (!staticStatePrefix.equals(dynamicStatePrefix)) {
@@ -175,8 +181,6 @@ public class XFormsStateManager {
             final XFormsStateStore stateStore;
             if (staticStatePrefix.equals(PERSISTENT_STATE_PREFIX)) {
                 stateStore = XFormsPersistentApplicationStateStore.instance(externalContext);
-            } else if (staticStatePrefix.equals(APPLICATION_STATE_PREFIX))  {
-                stateStore = XFormsApplicationStateStore.instance(externalContext);
             } else {
                 // Invalid prefix
                 final String message = "Invalid state prefix: " + staticStatePrefix;
@@ -185,7 +189,7 @@ public class XFormsStateManager {
             }
 
             // Get state from store
-            final XFormsState xformsState = (stateStore == null) ? null : stateStore.find(staticStateUUID, dynamicStateUUID);
+            final XFormsState xformsState = stateStore.find(staticStateUUID, dynamicStateUUID);
 
             if (xformsState == null) {
                 // Oops, we couldn't find the state in the store
@@ -215,216 +219,97 @@ public class XFormsStateManager {
                 }
             }
 
-            xformsDecodedClientState = new XFormsDecodedClientState(xformsState, staticStateUUID, dynamicStateUUID);
+            xformsDecodedClientState = xformsState;
 
         } else {
             // State comes directly with request
-            xformsDecodedClientState = new XFormsDecodedClientState(new XFormsState(staticStateString, dynamicStateString), null, null);
+            xformsDecodedClientState = new XFormsState(staticStateString, dynamicStateString);
         }
 
         return xformsDecodedClientState;
     }
 
     /**
-     * Get serialized and encrypted XForms state. This does not use the document's state handling preferences, and
-     * doesn't attempt to cache the containing document.
+     * Return the static state string to send to the client in the HTML page.
      *
-     * @param containingDocument        containing document
-     * @param propertyContext           current context
-     * @param xformsDecodedClientState  decoded state as received in Ajax request
-     * @return                          XFormsState serialized and encrypted
+     * @param propertyContext       current context
+     * @param containingDocument    document
+     * @return                      encoded state
      */
-    public static XFormsState getEncryptedSerializedClientState(XFormsContainingDocument containingDocument, PropertyContext propertyContext, XFormsDecodedClientState xformsDecodedClientState) {
-
-        // Create encoded static state and make sure encryption is used
-        final String newEncodedStaticState;
+    public String getClientEncodedStaticState(PropertyContext propertyContext, XFormsContainingDocument containingDocument) {
+        final String staticStateString;
         {
-            final long startTime = indentedLogger.isDebugEnabled() ? System.currentTimeMillis() : 0;
-
-            final String encodedStaticState = xformsDecodedClientState.getXFormsState().getStaticState();
-            newEncodedStaticState = XFormsUtils.ensureEncrypted(propertyContext, encodedStaticState);
-
-            if (indentedLogger.isDebugEnabled()) {
-                final long elapsedTime = System.currentTimeMillis() - startTime;
-                indentedLogger.logDebug(LOG_TYPE, "encoded static state", "time", Long.toString(elapsedTime));
+            if (!XFormsProperties.isClientStateHandling(containingDocument)) {
+                // Return UUID
+                staticStateString = PERSISTENT_STATE_PREFIX + containingDocument.getStaticState().getUUID();
+            } else {
+                // Return full encoded state
+                staticStateString = containingDocument.getStaticState().getEncodedStaticState(propertyContext);
             }
         }
-
-        // Create encoded dynamic state and make sure encryption is used
-        final String newEncodedDynamicState;
-        {
-            final long startTime = indentedLogger.isDebugEnabled() ? System.currentTimeMillis() : 0;
-            newEncodedDynamicState = containingDocument.createEncodedDynamicState(propertyContext, true);
-            if (indentedLogger.isDebugEnabled()) {
-                final long elapsedTime = System.currentTimeMillis() - startTime;
-                indentedLogger.logDebug(LOG_TYPE, "encoded dynamic state", "time", Long.toString(elapsedTime));
-            }
-        }
-
-        return new XFormsState(newEncodedStaticState, newEncodedDynamicState);
+        return staticStateString;
     }
 
-
     /**
-     * Get the encoded XForms state as it must be sent to the client within an Ajax response.
+     * Return the dynamic state string to send to the client in the HTML page.
      *
-     * @param containingDocument        containing document
-     * @param propertyContext           current context
-     * @param xformsDecodedClientState  decoded state as received in Ajax request
-     * @param isAllEvents               whether this is a special "all events" request
-     * @return                          XFormsState containing the encoded static and dynamic states
+     * @param propertyContext       current context
+     * @param containingDocument    document
+     * @return                      encoded state
      */
-    public static XFormsState getEncodedClientStateDoCache(XFormsContainingDocument containingDocument, PropertyContext propertyContext,
-                                                    XFormsDecodedClientState xformsDecodedClientState, boolean isAllEvents) {
-
-        final ExternalContext externalContext = XFormsUtils.getExternalContext(propertyContext);
-
-        // Compute static state and dynamic state
-        final String staticStateString;
+    public String getClientEncodedDynamicState(PropertyContext propertyContext, XFormsContainingDocument containingDocument) {
         final String dynamicStateString;
         {
-            // Whether the incoming state handling mode is different from the outgoing state handling mode
-            final boolean isMustChangeStateHandling
-                    = xformsDecodedClientState.isClientStateHandling() != XFormsProperties.isClientStateHandling(containingDocument);
-
-            final XFormsState newXFormsState;
-            if (containingDocument.isDirtySinceLastRequest() || isMustChangeStateHandling) {
-                if (containingDocument.isDirtySinceLastRequest()) {
-                    // The document is dirty
-                    indentedLogger.logDebug(LOG_TYPE, "Document is dirty: generate new dynamic state.");
-                } else {
-                    // Changing modes
-                    indentedLogger.logDebug(LOG_TYPE, "Changing state handling mode: generate new dynamic state.");
-                }
-
-                // Produce page generation id if needed
-                final String currentPageGenerationId = (xformsDecodedClientState.getStaticStateUUID() != null) ? xformsDecodedClientState.getStaticStateUUID() : UUIDUtils.createPseudoUUID();
-
-                // Get encoded static state
-                staticStateString = xformsDecodedClientState.getIncomingStaticStateEncoded(containingDocument, currentPageGenerationId);
-
-                // Create and encode dynamic state (encoded static state is reused)
-                final String newEncodedDynamicState = containingDocument.createEncodedDynamicState(propertyContext, false);
-                newXFormsState = new XFormsState(xformsDecodedClientState.getXFormsState().getStaticState(), newEncodedDynamicState);
-
-                if (!XFormsProperties.isClientStateHandling(containingDocument)) {
-                    final String requestId = xformsDecodedClientState.getDynamicStateUUID(); // may be null when switching modes
-
-                    // Get session id if needed
-                    final ExternalContext.Session session = externalContext.getSession(FORCE_SESSION_CREATION);
-                    final String sessionId = (session != null) ? session.getId() : null;
-
-                    // Produce dynamic state key (keep the same when allEvents!)
-                    final String newRequestId = isAllEvents ? requestId : UUIDUtils.createPseudoUUID();
-
-                    // New server state handling with persistent store
-                    final XFormsStateStore stateStore = XFormsPersistentApplicationStateStore.instance(externalContext);
-                    stateStore.add(currentPageGenerationId, requestId, newRequestId, newXFormsState, sessionId, false);
-                    dynamicStateString = PERSISTENT_STATE_PREFIX + newRequestId;
-                } else {
-                    // Send state directly to the client
-                    dynamicStateString = newEncodedDynamicState;
-                }
+            if (!XFormsProperties.isClientStateHandling(containingDocument)) {
+                // Return UUID
+                dynamicStateString = PERSISTENT_STATE_PREFIX + containingDocument.getDynamicStateLatestUUID();
             } else {
-                // The document is not dirty AND we are not changing mode: no real encoding takes place here
-                indentedLogger.logDebug(LOG_TYPE, "Document is not dirty: keep existing dynamic state.");
-                newXFormsState = xformsDecodedClientState.getXFormsState();
-
-                staticStateString = xformsDecodedClientState.getIncomingStaticStateEncoded(containingDocument);
-                dynamicStateString = xformsDecodedClientState.getIncomingDynamicStateEncoded(containingDocument);
-
-                if (indentedLogger.isDebugEnabled() && !XFormsProperties.isClientStateHandling(containingDocument)) {
-                    // Check that dynamic state is the same
-                    // TODO: Need XML-aware comparison here
-//                    final String newEncodedDynamicState = containingDocument.createEncodedDynamicState(pipelineContext);
-//                    if (!newEncodedDynamicState.equals(xformsDecodedClientState.getXFormsState().getDynamicState())) {
-//
-//                        final Document oldDocument = XFormsUtils.decodeXML(pipelineContext, xformsDecodedClientState.getXFormsState().getDynamicState());
-//                        final Document newDocument = XFormsUtils.decodeXML(pipelineContext, newEncodedDynamicState);
-//
-//                        indentedLogger.logDebug(LOG_TYPE, "Old document:\n" + Dom4jUtils.domToString(oldDocument));
-//                        indentedLogger.logDebug(LOG_TYPE, "New document:\n" + Dom4jUtils.domToString(newDocument));
-//
-//                        throw new OXFException("Document is not dirty but dynamic state turns out to be different from original.");
-//                    }
-                }
-            }
-
-            // Cache document if requested and possible
-            if (XFormsProperties.isCacheDocument()) {
-                XFormsDocumentCache.instance().add(propertyContext, newXFormsState, containingDocument);
+                // Return full encoded state
+                dynamicStateString = containingDocument.createEncodedDynamicState(propertyContext, true);
             }
         }
+        return dynamicStateString;
+    }
 
-        return new XFormsState(staticStateString, dynamicStateString);
+    public void beforeUpdateResponse(PropertyContext propertyContext, XFormsContainingDocument containingDocument) {
+        if (containingDocument.isDirtySinceLastRequest()) {
+            // The document is dirty
+            indentedLogger.logDebug(LOG_TYPE, "Document is dirty: generate new dynamic state.");
+
+            // Tell the document to update its state
+            containingDocument.updateDynamicState();
+        } else {
+            // The document is not dirty: no real encoding takes place here
+            indentedLogger.logDebug(LOG_TYPE, "Document is not dirty: keep existing dynamic state.");
+        }
+    }
+
+    public void afterUpdateResponse(PropertyContext propertyContext, XFormsContainingDocument containingDocument) {
+        if (XFormsProperties.isCacheDocument()) {
+            // Cache the document
+            XFormsDocumentCache.instance().storeDocument(propertyContext, containingDocument);
+        }
     }
 
     /**
-     * Represent a decoded client state, i.e. a decoded XFormsState with some information extracted from the Ajax
-     * request.
+     * Return the delay for the session heartbeat event.
+     *
+     * @param containingDocument    containing document
+     * @param externalContext       external context (for access to session and application scopes)
+     * @return                      delay in ms, or -1 is not applicable
      */
-    public static class XFormsDecodedClientState {
-
-        private XFormsState xformsState;
-        private String staticStateUUID;
-        private String dynamicStateUUID;
-
-        public XFormsDecodedClientState(XFormsState xformsState, String staticStateUUID, String dynamicStateUUID) {
-            this.xformsState = xformsState;
-            this.staticStateUUID = staticStateUUID;
-            this.dynamicStateUUID = dynamicStateUUID;
-        }
-
-        public XFormsState getXFormsState() {
-            return xformsState;
-        }
-
-        public String getStaticStateUUID() {
-            return staticStateUUID;
-        }
-
-        public String getDynamicStateUUID() {
-            return dynamicStateUUID;
-        }
-
-        public boolean isClientStateHandling() {
-            // Request was in client state handling if we don't have an incoming UUID for the dynamic state
-            return dynamicStateUUID == null;
-        }
-
-        public String getIncomingStaticStateEncoded(XFormsContainingDocument containingDocument) {
-            return getIncomingStaticStateEncoded(containingDocument, getStaticStateUUID());
-        }
-
-        public String getIncomingStaticStateEncoded(XFormsContainingDocument containingDocument, String newStaticStateUUID) {
-            if (!XFormsProperties.isClientStateHandling(containingDocument)) {
-                if (newStaticStateUUID == null) {
-                    final String message = "Null value for newStaticStateUUID";
-                    indentedLogger.logDebug(LOG_TYPE, message);
-                    throw new OXFException(message);
-                }
-                return PERSISTENT_STATE_PREFIX + newStaticStateUUID;
-            } else {
-                return getXFormsState().getStaticState();
-            }
-        }
-
-        public String getIncomingDynamicStateEncoded(XFormsContainingDocument containingDocument) {
-            return getIncomingDynamicStateEncoded(containingDocument, getDynamicStateUUID());
-        }
-
-        public String getIncomingDynamicStateEncoded(XFormsContainingDocument containingDocument, String newDynamicStateUUID) {
-            if (!XFormsProperties.isClientStateHandling(containingDocument)) {
-                if (newDynamicStateUUID == null) {
-                    final String message = "Null value for newDynamicStateUUID";
-                    indentedLogger.logDebug(LOG_TYPE, message);
-                    throw new OXFException(message);
-                }
-                return PERSISTENT_STATE_PREFIX + newDynamicStateUUID;
-            } else {
-                return getXFormsState().getDynamicState();
-            }
-
+    public static long getHeartbeatDelay(XFormsContainingDocument containingDocument, ExternalContext externalContext) {
+        if (XFormsProperties.isClientStateHandling(containingDocument)) {
+            return -1;
+        } else {
+            final long heartbeatDelay;
+            final boolean isSessionHeartbeat = XFormsProperties.isSessionHeartbeat(containingDocument);
+            final ExternalContext.Session session = externalContext.getSession(FORCE_SESSION_CREATION);
+            if (isSessionHeartbeat && session != null)
+                heartbeatDelay = session.getMaxInactiveInterval() * 800; // 80% of session expiration time, in ms
+            else
+                heartbeatDelay = -1;
+            return heartbeatDelay;
         }
     }
 }

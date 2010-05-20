@@ -549,10 +549,10 @@ public class XFormsStaticState {
      * Get a serialized static state. If an encodedStaticState was provided during restoration, return that. Otherwise,
      * return a serialized static state computed from models, instances, and XHTML documents.
      *
-     * @param pipelineContext   current PropertyContext
+     * @param propertyContext   current PropertyContext
      * @return                  serialized static sate
      */
-    public String getEncodedStaticState(PropertyContext pipelineContext) {
+    public String getEncodedStaticState(PropertyContext propertyContext) {
 
         if (!initialized) {
 
@@ -580,7 +580,7 @@ public class XFormsStaticState {
 
             // Remember encoded state and discard Document
             final boolean isStateHandlingClient = getStringProperty(XFormsProperties.STATE_HANDLING_PROPERTY).equals(XFormsProperties.STATE_HANDLING_CLIENT_VALUE);
-            encodedStaticState = XFormsUtils.encodeXML(pipelineContext, staticStateDocument, isStateHandlingClient ? XFormsProperties.getXFormsPassword() : null, true);
+            encodedStaticState = XFormsUtils.encodeXML(propertyContext, staticStateDocument, isStateHandlingClient ? XFormsProperties.getXFormsPassword() : null, true);
 
             staticStateDocument = null;
             initialized = true;

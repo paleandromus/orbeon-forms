@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009 Orbeon, Inc.
+ * Copyright (C) 2010 Orbeon, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it under the terms of the
  * GNU Lesser General Public License as published by the Free Software Foundation; either version
@@ -39,14 +39,14 @@ public abstract class XFormsStateStore {
     /**
      * Add an XForms state to the store.
      *
-     * @param pageGenerationId  page generation id
-     * @param oldRequestId      old request id if available
-     * @param newRequestId      new request id
-     * @param xformsState       state to store
-     * @param currentSessionId  current session id
-     * @param isInitialEntry    whether this is an initial dynamic state entry which has preferential treatment
+     * @param staticStateUUID       static state UUID
+     * @param oldDynamicStateUUID   old dynamic state UUID
+     * @param dynamicStateUUID      dynamic state UUID
+     * @param xformsState           state to store
+     * @param currentSessionId      current session id
+     * @param isInitialEntry        whether this is an initial dynamic state entry which has preferential treatment
      */
-    public synchronized void add(String pageGenerationId, String oldRequestId, String newRequestId, XFormsState xformsState, String currentSessionId, boolean isInitialEntry) {
+    public synchronized void addEntry(String staticStateUUID, String oldDynamicStateUUID, String dynamicStateUUID, XFormsState xformsState, String currentSessionId, boolean isInitialEntry) {
 
         // Remove old dynamic state if present as we keep only one entry per page generation
         // NOTE: We try to keep the initial dynamic state entry in the store however, because the client is still likely to request it
@@ -87,7 +87,7 @@ public abstract class XFormsStateStore {
 
         // NOTE: We don't remove old entries if they are already persisted. Is this a good strategy?
         if (!isInitialEntry) {
-            final CacheLinkedList.ListEntry previousListEntry = keyToEntryMap.get(oldRequestId);
+            final CacheLinkedList.ListEntry previousListEntry = keyToEntryMap.get(oldDynamicStateUUID);
             if (previousListEntry != null) {
                 // Found previous entry
                 final StoreEntry previousStoredEntry = (StoreEntry) previousListEntry.element;
@@ -106,10 +106,10 @@ public abstract class XFormsStateStore {
         }
 
         // Add static state and move it to the front
-        addOrReplaceOne(pageGenerationId, xformsState.getStaticState(), false, currentSessionId, null);
+        addOrReplaceOne(staticStateUUID, xformsState.getStaticState(), false, currentSessionId, null);
 
         // Add new dynamic state and move it to the front
-        addOrReplaceOne(newRequestId, xformsState.getDynamicState(), isInitialEntry, currentSessionId, oldRequestId);
+        addOrReplaceOne(dynamicStateUUID, xformsState.getDynamicState(), isInitialEntry, currentSessionId, oldDynamicStateUUID);
 
         if (isDebugEnabled()) {
             debug("store size after adding: " + currentStoreSize + " bytes.");
